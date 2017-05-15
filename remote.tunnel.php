@@ -1,130 +1,105 @@
 <?php
 error_reporting(0);
 
-class MysqlTunnelServer{
-	private $db, $link;
-	public $errors = array();
-	public $ips = array('127.0.0.1'); //Add here allowed ip
+class MysqlTunnelServer
+{
+    private $db;
+    private $link;
+    public $errors = array();
+    public $ips = array('127.0.0.1'); //Add here allowed ip
 
-	function __construct()
-	{
-		$input = file_get_contents('php://input');
+    public function __construct()
+    {
+        $input = file_get_contents('php://input');
 
-		if(!in_array($this->get_ip(), $this->ips) OR empty($input))
-		{
-			$this->show_404();
-		}
+        if (!in_array($this->get_ip(), $this->ips) or empty($input)) {
+            $this->show_404();
+        }
 
-		try{
-			$data			= json_decode($input);
-			$this->db		= $data->db;
-			$this->query	= base64_decode($data->query);
-		}catch (Exception $e){
-			$this->errors[] = $e->getMessage();
-		}
+        try {
+            $data = json_decode($input);
+            $this->db = $data->db;
+            $this->query = base64_decode($data->query);
+        } catch (Exception $e) {
+            $this->errors[] = $e->getMessage();
+        }
 
-		$this->tunnel_connect();
-		$this->get_result();
+        $this->tunnel_connect();
+        $this->get_result();
+    }
 
-	}
+    private function tunnel_connect()
+    {
+        $this->link = new mysqli($this->db->host, $this->db->user, $this->db->pass, $this->db->db_name, $this->db->port);
 
-	private function tunnel_connect()
-	{
-		$this->link = new mysqli($this->db->host, $this->db->user, $this->db->pass, $this->db->db_name, $this->db->port);
+        if ($this->link->connect_error) {
+            $this->errors[] = $this->link->connect_errno . ' - '. $this->link->connect_error;
+            return false;
+        }
+    }
 
-		if ($this->link->connect_error) {
+    private function do_query()
+    {
+        $result = $this->link->query($this->query);
 
-			$this->errors[] = $this->link->connect_errno . ' - '. $this->link->connect_error;
-			return false;
-		}
+        if ($result) {
+            $num_rows = $result->num_rows;
 
-	}
+            $new_result = array();
+            $new_result['num_rows'] = $num_rows;
 
-	private function do_query()
-	{
-		$query = $this->link->query($this->query, $this->link);
+            if ($num_rows > 1) {
+                while ($row = $result->fetch_object()) {
+                    $new_result['result'][] = $row;
+                }
+            } else {
+                $new_result['result'] = $result->fetch_object();
+            }
+            $result->close();
 
-		if($query)
-		{
-			$num_rows = $this->link->num_rows($query);
+            return json_encode($new_result);
+        } else {
+            $this->errors[] = $this->link->error;
+            return false;
+        }
+    }
 
-			$result = array();
-			$result['num_rows'] = $num_rows;
+    public function get_result()
+    {
+        $result = $this->do_query();
 
-			if($num_rows > 1)
-			{
-				while($row = $this->link->fetch_object($query))
-				{
-					$result['result'][] = $row;
-				}
+        if (count($this->errors) > 0) {
+            echo $this->get_errors();
+        } else {
+            echo $result;
+        }
+    }
 
-			}else{
-				$result['result'] = $this->link->fetch_object($query);
+    private function get_errors()
+    {
+        return json_encode(array('errors' => array_unique($this->errors)));
+    }
 
-			}
-            $row->close();
+    private function get_ip()
+    {
+        if ($_SERVER['HTTP_HOST'] == 'localhost') {
+            $ip = '127.0.0.1';
+        } elseif (isset($_SERVER['HTTP_CLIENT_IP'])) {
+            $ip = $_SERVER['HTTP_CLIENT_IP'];
+        } elseif (isset($_SERVER['HTTP_X_FORWARDED_FOR'])) {
+            $ip = $_SERVER['HTTP_X_FORWARDED_FOR'];
+        } else {
+            $ip = $_SERVER['REMOTE_ADDR'];
+        }
 
-			return json_encode($result);
+        return $ip;
+    }
 
-		}
-		else
-		{
-			$this->errors[] = $this->link->error();
-			return false;
-		}
-
-	}
-
-	public function get_result()
-	{
-		$result = $this->do_query();
-
-		if(count($this->errors) > 0)
-		{
-			echo $this->get_errors();
-
-		}else
-		{
-			echo $result;
-
-		}
-
-	}
-
-	private function get_errors()
-	{
-		return json_encode(array('errors' => array_unique($this->errors)));
-	}
-
-	private function get_ip()
-	{
-		if($_SERVER['HTTP_HOST'] == 'localhost' )
-		{
-			$ip = '127.0.0.1';
-		}
-		elseif(isset($_SERVER['HTTP_CLIENT_IP']))
-		{
-			$ip = $_SERVER['HTTP_CLIENT_IP'];
-		}
-		elseif(isset($_SERVER['HTTP_X_FORWARDED_FOR']))
-		{
-			$ip = $_SERVER['HTTP_X_FORWARDED_FOR'];
-		}
-		else
-		{
-			$ip = $_SERVER['REMOTE_ADDR'];
-		}
-
-		return $ip;
-
-	}
-
-	private function show_404()
-	{
-		header($_SERVER['SERVER_PROTOCOL'].' 404 Not Found');
-		die;
-	}
-
+    private function show_404()
+    {
+        header($_SERVER['SERVER_PROTOCOL'].' 404 Not Found');
+        die;
+    }
 }
 
 new MysqlTunnelServer;
